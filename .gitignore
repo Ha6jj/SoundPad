@@ -1,0 +1,9 @@
+build*/
+out/
+.vs/
+.vscode/
+CMakeSettings.json
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
