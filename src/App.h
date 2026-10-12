@@ -27,6 +27,7 @@ private:
 
     bool loadConfig();
     void applyBinds();
+    void applyMic();
     void onHotkey(size_t index);
     bool playRecord(const SoundRecord& rec, std::string& error);
     std::optional<SoundRecord> resolveOrComplain(const std::string& ref);
@@ -46,6 +47,7 @@ private:
     void cmdBinds(const Args&);
     void cmdReload(const Args&);
     void cmdDevices(const Args&);
+    void cmdMic(const Args&);
     void cmdFormats(const Args&);
 
     std::filesystem::path configPath_;

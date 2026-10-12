@@ -77,7 +77,8 @@ App::App(fs::path configPath) : configPath_(std::move(configPath))
         {"gain",    {"gain <имя|id> <0-200>", "громкость отдельного звука, %", &App::cmdGain}},
         {"binds",   {"binds", "активные горячие клавиши", &App::cmdBinds}},
         {"reload",  {"reload", "перечитать конфиг и бинды", &App::cmdReload}},
-        {"devices", {"devices", "устройства вывода звука", &App::cmdDevices}},
+        {"devices", {"devices", "устройства вывода и микрофоны", &App::cmdDevices}},
+        {"mic",     {"mic [on|off|0-200]", "микрофон в кабеле: статус, вкл/выкл, громкость", &App::cmdMic}},
         {"formats", {"formats", "поддерживаемые форматы", &App::cmdFormats}},
     };
     aliases_ = {{"?", "help"}, {"ls", "list"}, {"rm", "remove"}, {"del", "remove"},
@@ -109,6 +110,7 @@ int App::run()
     for (const auto& w : warnings) sayErr(w);
     if (!audio_.ready()) sayErr("звук недоступен — работают только команды управления базой");
 
+    applyMic();
     applyBinds();
 
     std::string line;
@@ -188,6 +190,25 @@ void App::applyBinds()
     for (const auto& f : failed) sayErr(f);
 }
 
+void App::applyMic()
+{
+    audio_.setMicVolume(config_.micVolume / 100.0f);
+    std::string mic = console::toLower(config_.microphone);
+    if (mic == "none" || mic == "off") {
+        audio_.stopMic();
+        return;
+    }
+    if (!audio_.ready()) return;
+    if (console::toLower(config_.micOutput) == "default")
+        sayErr("микрофон подмешивается в устройство по умолчанию (наушники/колонки). "
+               "Для игр и Discord укажите виртуальный кабель: outputs = CABLE Input; default");
+    std::string err;
+    if (audio_.startMic(config_.microphone, config_.micOutput, err))
+        say("Микрофон: " + audio_.micDescription() + (audio_.micMuted() ? "  (выключен)" : ""));
+    else
+        sayErr("микрофон: " + err);
+}
+
 void App::onHotkey(size_t index)
 {
     Bind b;
@@ -210,6 +231,10 @@ void App::onHotkey(size_t index)
                 std::to_string(static_cast<int>(audio_.masterVolume() * 100 + 0.5f)) + "%");
             break;
         }
+        case Bind::Action::MicToggle:
+            audio_.setMicMuted(!audio_.micMuted());
+            say("[" + b.hotkey.toString() + "] микрофон " + (audio_.micMuted() ? "выключен" : "включён"));
+            break;
         case Bind::Action::PlaySound: {
             auto rec = db_.resolve(b.sound);
             if (!rec) {
@@ -489,6 +514,7 @@ void App::cmdBinds(const Args&)
         case Bind::Action::StopAll: o << "[остановить всё]"; break;
         case Bind::Action::VolumeUp: o << "[громкость +10%]"; break;
         case Bind::Action::VolumeDown: o << "[громкость -10%]"; break;
+        case Bind::Action::MicToggle: o << "[микрофон выкл/вкл]"; break;
         case Bind::Action::PlaySound: {
             auto r = db_.resolve(b.sound);
             o << b.sound << (r ? "" : "  (нет в базе!)");
@@ -519,29 +545,58 @@ void App::cmdReload(const Args&)
         for (const auto& name : audio_.activeDeviceNames()) say("Вывод: " + name);
     }
     audio_.setMasterVolume(config_.volume / 100.0f);
+    applyMic();
     applyBinds();
     say("Конфиг перечитан.");
 }
 
 void App::cmdDevices(const Args&)
 {
-    auto devices = audio_.listDevices();
-    if (devices.empty()) {
-        say("Устройства вывода не найдены.");
-        return;
-    }
     auto active = audio_.activeDeviceNames();
+    std::string micDesc = audio_.micDescription();
     std::ostringstream o;
-    o << "Устройства вывода (в конфиге outputs = часть имени):\n";
-    for (const auto& d : devices) {
+    o << "Устройства вывода (outputs = часть имени, * — используется):";
+    auto playback = audio_.listPlaybackDevices();
+    if (playback.empty()) o << "\n    (нет)";
+    for (const auto& d : playback) {
         bool used = std::any_of(active.begin(), active.end(), [&](const std::string& n) {
             return n == d.name || n == "default (" + d.name + ")";
         });
-        o << (used ? "  * " : "    ") << d.name << (d.isDefault ? "  [по умолчанию]" : "") << '\n';
+        o << '\n' << (used ? "  * " : "    ") << d.name << (d.isDefault ? "  [по умолчанию]" : "");
     }
-    std::string s = o.str();
-    s.pop_back();
-    say(s);
+    o << "\nМикрофоны (microphone = часть имени):";
+    auto capture = audio_.listCaptureDevices();
+    if (capture.empty()) o << "\n    (нет)";
+    for (const auto& d : capture) {
+        bool used = !micDesc.empty() && micDesc.rfind(d.name + " -> ", 0) == 0;
+        o << '\n' << (used ? "  * " : "    ") << d.name << (d.isDefault ? "  [по умолчанию]" : "");
+    }
+    say(o.str());
+}
+
+void App::cmdMic(const Args& a)
+{
+    if (!a.empty()) {
+        std::string arg = console::toLower(a[0]);
+        int v;
+        if (arg == "on") {
+            audio_.setMicMuted(false);
+        } else if (arg == "off") {
+            audio_.setMicMuted(true);
+        } else if (parseInt(a[0], v) && v >= 0 && v <= 200) {
+            audio_.setMicVolume(v / 100.0f);
+        } else {
+            sayErr("использование: mic [on|off|0-200]");
+            return;
+        }
+    }
+    if (!audio_.micActive()) {
+        say("Микрофон не подмешивается (microphone = " + config_.microphone +
+            "). Настройка — в секции [settings] конфига, затем reload.");
+        return;
+    }
+    say("Микрофон: " + audio_.micDescription() + ", " + (audio_.micMuted() ? "выключен" : "включён") +
+        ", громкость " + std::to_string(static_cast<int>(audio_.micVolume() * 100 + 0.5f)) + "%");
 }
 
 void App::cmdFormats(const Args&)

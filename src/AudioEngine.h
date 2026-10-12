@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-struct OutputDeviceInfo {
+struct DeviceInfo {
     std::string name;
     bool isDefault = false;
 };
@@ -36,7 +36,8 @@ public:
     void shutdown();
     bool ready() const;
 
-    std::vector<OutputDeviceInfo> listDevices();
+    std::vector<DeviceInfo> listPlaybackDevices();
+    std::vector<DeviceInfo> listCaptureDevices();
     std::vector<std::string> activeDeviceNames() const;
 
     // volume — громкость конкретного звука (1.0 = 100%).
@@ -49,6 +50,19 @@ public:
     void setMasterVolume(float v);
     float masterVolume() const;
 
+    // Проброс микрофона: голос с реального микрофона подмешивается к звукам
+    // на устройстве target (виртуальный кабель), чтобы в игре/Discord было
+    // слышно и вас, и саундпад. mic — "default" или часть имени устройства,
+    // target — часть имени одного из активных устройств вывода.
+    bool startMic(const std::string& mic, const std::string& target, std::string& error);
+    void stopMic();
+    bool micActive() const;
+    std::string micDescription() const;  // "Микрофон -> CABLE Input"
+    void setMicMuted(bool muted);
+    bool micMuted() const;
+    void setMicVolume(float v);  // 1.0 = 100%, до 2.0
+    float micVolume() const;
+
     // Открывает файл декодером указанного формата и читает его параметры.
     // Не требует рабочего устройства вывода.
     static bool probe(const std::filesystem::path& file, AudioFormat format,
@@ -57,8 +71,11 @@ public:
 private:
     struct Output;
     struct Voice;
+    struct MicLink;
 
     void reapFinishedLocked();
+    void stopMicLocked();
+    void applyMicVolumeLocked();
 
     mutable std::mutex mutex_;
     std::unique_ptr<struct ma_context> context_;
@@ -66,4 +83,7 @@ private:
     std::vector<std::unique_ptr<Output>> outputs_;
     std::vector<std::unique_ptr<Voice>> voices_;
     float masterVolume_ = 1.0f;
+    std::unique_ptr<MicLink> mic_;
+    bool micMuted_ = false;
+    float micVolume_ = 1.0f;
 };

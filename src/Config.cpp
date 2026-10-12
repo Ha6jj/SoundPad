@@ -17,9 +17,24 @@ database = soundpad.db
 
 ; Устройства вывода через ';'. "default" — системное по умолчанию.
 ; Остальное — часть имени устройства (см. команду "devices").
-; Пример для вывода в микрофон через VB-Cable и одновременно в наушники:
-;   outputs = CABLE Input; default
+;
+; Чтобы звуки слышали в игре / Discord, нужен виртуальный кабель
+; (VB-Audio Virtual Cable, https://vb-audio.com/Cable/):
+;   outputs    = CABLE Input; default   <- в кабель и себе в наушники
+;   microphone = default                <- ваш настоящий микрофон
+; а в Discord / игре выберите устройством ввода "CABLE Output".
 outputs = default
+
+; Настоящий микрофон, который подмешивается в кабель вместе со звуками,
+; чтобы собеседники слышали и вас, и саундпад.
+; none — не подмешивать, default — микрофон по умолчанию, иначе часть имени.
+microphone = none
+
+; Устройство из outputs, в которое идёт микрофон (по умолчанию — первое в outputs).
+; mic_output = CABLE Input
+
+; Громкость микрофона 0..200.
+mic_volume = 100
 
 ; Общая громкость 0..100.
 volume = 80
@@ -32,7 +47,7 @@ overlap = true
 ; Модификаторы: Ctrl, Alt, Shift, Win. Клавиши: A-Z, 0-9, F1-F24, Num0-Num9,
 ; Space, Enter, Tab, Esc, Insert, Delete, Home, End, PageUp, PageDown,
 ; Up, Down, Left, Right, Pause, NumAdd, NumSub, NumMul, NumDiv, NumDecimal.
-; Специальные действия: !stop, !volume+, !volume-
+; Специальные действия: !stop, !volume+, !volume-, !mic (выкл/вкл микрофон)
 ;
 ; Ctrl+Alt+1 = airhorn
 ; Ctrl+Alt+2 = "sad trombone"
@@ -40,6 +55,7 @@ overlap = true
 Ctrl+Alt+0 = !stop
 Ctrl+Alt+Up = !volume+
 Ctrl+Alt+Down = !volume-
+Ctrl+Alt+M = !mic
 )";
 
 std::string unquote(const std::string& s)
@@ -137,6 +153,18 @@ bool Config::load(const std::filesystem::path& file, Config& out,
                 } catch (...) {
                     warn("volume должен быть числом 0..100");
                 }
+            } else if (k == "microphone" || k == "mic") {
+                cfg.microphone = value.empty() ? "none" : value;
+            } else if (k == "mic_output") {
+                cfg.micOutput = value;
+            } else if (k == "mic_volume") {
+                try {
+                    int v = std::stoi(value);
+                    if (v < 0 || v > 200) throw std::out_of_range("mic_volume");
+                    cfg.micVolume = v;
+                } catch (...) {
+                    warn("mic_volume должен быть числом 0..200");
+                }
             } else if (k == "overlap") {
                 if (!parseBool(value, cfg.overlap)) warn("overlap должен быть true/false");
             } else {
@@ -158,6 +186,7 @@ bool Config::load(const std::filesystem::path& file, Config& out,
             if (lv == "!stop") b.action = Bind::Action::StopAll;
             else if (lv == "!volume+") b.action = Bind::Action::VolumeUp;
             else if (lv == "!volume-") b.action = Bind::Action::VolumeDown;
+            else if (lv == "!mic") b.action = Bind::Action::MicToggle;
             else if (lv[0] == '!') {
                 warn("неизвестное действие " + value);
                 continue;
@@ -174,6 +203,7 @@ bool Config::load(const std::filesystem::path& file, Config& out,
         }
     }
 
+    if (cfg.micOutput.empty()) cfg.micOutput = cfg.outputs.front();
     if (cfg.database.is_relative()) cfg.database = file.parent_path() / cfg.database;
     out = std::move(cfg);
     return true;
