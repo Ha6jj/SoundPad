@@ -22,6 +22,14 @@ ma_encoding_format toMaEncoding(AudioFormat f)
     return ma_encoding_format_unknown;
 }
 
+// Выход виртуального кабеля (VB-Cable и аналоги) — не настоящий микрофон.
+bool isCableOutput(const std::string& name)
+{
+    std::string n = console::toLower(name);
+    return n.find("cable output") != std::string::npos || n.find("cable-a output") != std::string::npos ||
+           n.find("cable-b output") != std::string::npos || n.find("voicemeeter out") != std::string::npos;
+}
+
 ma_result openDecoder(const std::filesystem::path& file, const ma_decoder_config& cfg, ma_decoder* dec)
 {
 #ifdef _WIN32
@@ -389,9 +397,19 @@ bool AudioEngine::startMic(const std::string& micName, const std::string& target
     } else {
         for (ma_uint32 i = 0; i < count; ++i)
             if (infos[i].isDefault) micLabel = infos[i].name;
+        // Для игр часто делают CABLE Output микрофоном Windows по умолчанию.
+        // Брать его нельзя (петля), поэтому берём первый настоящий микрофон.
+        if (isCableOutput(micLabel)) {
+            for (ma_uint32 i = 0; i < count; ++i)
+                if (!isCableOutput(infos[i].name)) {
+                    micId = &infos[i].id;
+                    micLabel = infos[i].name;
+                    break;
+                }
+        }
     }
     // Частая ошибка: выбрать микрофоном выход самого кабеля — получится петля.
-    if (console::toLower(micLabel).find("cable output") != std::string::npos) {
+    if (isCableOutput(micLabel)) {
         error = "\"" + micLabel + "\" — это выход виртуального кабеля, укажите настоящий микрофон";
         return false;
     }
